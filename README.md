@@ -1,4 +1,4 @@
-# Huawei Matebook 14s / 16s soundcard fix for Ubuntu / Fedora / Fedora Atomic / Arch
+# Huawei Matebook 14s / 16s soundcard fix for Ubuntu / Fedora / Fedora Atomic / Arch / openSUSE MicroOS
 
 ## Problem
 
@@ -31,9 +31,13 @@ A daemon has been implemented that monitors the connection/disconnection of head
 bash install.sh
 ```
 
-The script automatically detects your package manager (`apt`, `pacman`, `eopkg`, `zypper`, `dnf`, or `rpm-ostree`) and installs the required dependencies.
+The script automatically detects your package manager (`apt`, `pacman`, `eopkg`, `transactional-update`, `zypper`, `dnf`, or `rpm-ostree`) and installs the required dependencies.
 
 > **Fedora Atomic desktops** (Silverblue, Kinoite, Sericea, etc.): the script uses `rpm-ostree` to install packages. A **reboot is required** after installation before the service becomes active.
+
+> **openSUSE MicroOS / Aeon / Kalpa**: the script uses `transactional-update` to install packages. A **reboot is required** after installation before the service becomes active.
+
+> **NixOS**: automatic installation is not supported. Please install `alsa-tools` and `alsa-utils` via `configuration.nix`, then manually copy the service files and enable them.
 
 ## Daemon control commands
 ```bash
@@ -45,7 +49,7 @@ systemctl stop huawei-soundcard-headphones-monitor
 
 ## Environment
 
-This fix definitely works under Ubuntu 22.04, Fedora 39, and Fedora Atomic desktops (Silverblue, Kinoite) for laptop model Huawei MateBook 14s.
+This fix definitely works under Ubuntu 22.04, Fedora 39, Fedora Atomic desktops (Silverblue, Kinoite), and openSUSE MicroOS/Aeon/Kalpa for laptop model Huawei MateBook 14s.
 
 ```bash
 $ inxi -F

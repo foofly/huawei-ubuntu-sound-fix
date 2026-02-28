@@ -16,6 +16,12 @@ elif
     sudo eopkg up
     sudo eopkg it alsa-tools alsa-utils git -y
 elif
+    command -v transactional-update &>/dev/null; then
+    echo "Using transactional-update to install dependencies (atomic desktop)..."
+    sudo transactional-update pkg install -y alsa-tools alsa-utils hda-verb
+    echo "NOTE: A reboot is required for installed packages to take effect."
+    ATOMIC=1
+elif
     command -v zypper &>/dev/null; then
     echo "Using zypper to install dependencies..."
     sudo zypper install -y alsa-tools alsa-utils hda-verb git
@@ -29,8 +35,14 @@ elif
     command -v dnf &>/dev/null; then
     echo "Using dnf to install dependencies..."
     sudo dnf install -y alsa-tools alsa-utils git
+elif
+    [ -f /etc/NIXOS ]; then
+    echo "NixOS detected. Automatic installation is not supported on NixOS."
+    echo "Please install alsa-tools and alsa-utils via configuration.nix,"
+    echo "then manually copy the service files and enable them."
+    exit 1
 else
-    echo "Neither apt, pacman, eopkg, zypper, dnf, nor rpm-ostree found. Cannot install dependencies."
+    echo "Neither apt, pacman, eopkg, transactional-update, zypper, rpm-ostree, dnf, nor NixOS found. Cannot install dependencies."
 fi
 
 echo "Copying files..."
