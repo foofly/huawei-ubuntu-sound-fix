@@ -1,4 +1,4 @@
-# Huawei Matebook 14s / 16s soundcard fix for Ubuntu / Fedora / Fedora Atomic / Arch / openSUSE MicroOS
+# Huawei Matebook 14s / 16s soundcard fix for Ubuntu / Fedora / Fedora Atomic / Arch / openSUSE MicroOS / PipeWire
 
 ## Problem
 
@@ -23,7 +23,7 @@ And:
 
 ## Solution
 
-A daemon has been implemented that monitors the connection/disconnection of headphones and accesses the sound card device in order to switch playback to the right place.
+An event-driven daemon monitors headphone jack connect/disconnect events using `alsactl monitor` (no polling) and issues HDA verb commands to switch routing. It works with both PulseAudio and PipeWire (via `pactl`) and dynamically discovers the sound card index and audio sink at runtime.
 
 ## Install
 
@@ -49,7 +49,7 @@ systemctl stop huawei-soundcard-headphones-monitor
 
 ## Environment
 
-This fix definitely works under Ubuntu 22.04, Fedora 39, Fedora Atomic desktops (Silverblue, Kinoite), and openSUSE MicroOS/Aeon/Kalpa for laptop model Huawei MateBook 14s.
+This fix works under Ubuntu 22.04+, Fedora 39+, Fedora Atomic desktops (Silverblue, Kinoite), and openSUSE MicroOS/Aeon/Kalpa for laptop model Huawei MateBook 14s. Both PulseAudio and PipeWire audio stacks are supported.
 
 ```bash
 $ inxi -F

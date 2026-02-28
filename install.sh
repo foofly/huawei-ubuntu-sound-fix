@@ -5,7 +5,7 @@ ATOMIC=0
 if command -v apt &>/dev/null; then
     echo "Using apt to install dependencies..."
     sudo apt update
-    sudo apt install -y alsa-tools alsa-utils git
+    sudo apt install -y alsa-tools alsa-utils pulseaudio-utils git
 elif
     command -v pacman &>/dev/null; then
     echo "Using pacman to install dependencies..."
