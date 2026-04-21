@@ -49,7 +49,9 @@ systemctl stop huawei-soundcard-headphones-monitor
 
 ## Environment
 
-This fix definitely works under Ubuntu 22.04, Fedora 39, Fedora Atomic desktops (Silverblue, Kinoite), and openSUSE MicroOS/Aeon/Kalpa for laptop model Huawei MateBook 14s.
+This fix works under Ubuntu 22.04, Fedora 39, Fedora Atomic desktops (Silverblue, Kinoite), and openSUSE MicroOS/Aeon/Kalpa for laptop model Huawei MateBook 14s.
+
+Audio port switching works on both **PulseAudio** and **PipeWire** systems. On PipeWire (e.g. Fedora Kinoite), the daemon detects the active desktop session and switches the sink port in the correct user context.
 
 ```bash
 $ inxi -F
