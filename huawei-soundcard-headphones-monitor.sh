@@ -42,6 +42,31 @@ function switch_to_speaker() {
     hda-verb /dev/snd/hwC0D0 0x1 0x715 0x2 > /dev/null 2> /dev/null
 }
 
+function find_desktop_uid() {
+    while IFS= read -r line; do
+        local sid uid t
+        sid=$(echo "$line" | awk '{print $1}')
+        uid=$(echo "$line" | awk '{print $2}')
+        t=$(loginctl show-session "$sid" -p Type --value 2>/dev/null)
+        if [ "$t" = "wayland" ] || [ "$t" = "x11" ]; then
+            echo "$uid"
+            return 0
+        fi
+    done < <(loginctl list-sessions --no-legend 2>/dev/null)
+}
+
+function set_audio_port() {
+    local port="$1"
+    local uid sink xrd
+    uid=$(find_desktop_uid)
+    if [ -z "$uid" ]; then return 0; fi
+    xrd="/run/user/$uid"
+    sink=$(sudo -u "#$uid" XDG_RUNTIME_DIR="$xrd" pactl list sinks short 2>/dev/null \
+          | awk '{print $2}' | grep -i 'sofhda\|hdadsp' | head -1)
+    if [ -z "$sink" ]; then return 0; fi
+    sudo -u "#$uid" XDG_RUNTIME_DIR="$xrd" pactl set-sink-port "$sink" "$port" 2>/dev/null || true
+}
+
 function switch_to_headphones() {
     move_output_to_headphones
 
@@ -57,8 +82,7 @@ function switch_to_headphones() {
     # clear pin value
     hda-verb /dev/snd/hwC0D0 0x1 0x715 0x0 > /dev/null 2> /dev/null
 
-    # sets amixer sink port to headphones instead of the speaker
-    pacmd set-sink-port alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__hw_sofhdadsp__sink "[Out] Headphones"
+    set_audio_port "[Out] Headphones"
 }
 
 function get_sound_card_index() {
