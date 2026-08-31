@@ -13,20 +13,16 @@ set -eo pipefail
 
 pidof -o %PPID -x "$0" >/dev/null && echo "Script $0 already running" && exit 1
 
-# Refuse to run on models this codec quirk does not apply to. The verbs below
-# target hardcoded widget numbers; elsewhere they address different widgets and
-# can silence the machine until a cold boot. The installer checks this too, but
-# the daemon re-applies on every boot, so it must not rely on that alone.
-SUPPORTED_MODELS="HKF-WXX CREF-16"
-product=$(cat "${DMI_DIR:-/sys/class/dmi/id}/product_name" 2>/dev/null || echo unknown)
+# Refuse on non-Huawei hardware. The verbs below target hardcoded widget
+# numbers; elsewhere they address different widgets and can silence the machine
+# until a cold boot. Unlisted Huawei models are allowed through: the quirk is
+# known on more of them than upstream documents.
 if [ "${FORCE_UNSUPPORTED_MODEL:-0}" != "1" ]; then
-    matched=0
-    for m in $SUPPORTED_MODELS; do
-        [ "$product" = "$m" ] && matched=1
-    done
-    if [ "$matched" -ne 1 ]; then
-        echo "Unsupported model '${product}' (supported: ${SUPPORTED_MODELS}) - refusing to touch the codec." >&2
-        echo "Set FORCE_UNSUPPORTED_MODEL=1 in the unit to override." >&2
+    dmi="${DMI_DIR:-/sys/class/dmi/id}"
+    vendor=$(cat "${dmi}/sys_vendor" 2>/dev/null || echo unknown)
+    if [ "$vendor" != "HUAWEI" ]; then
+        echo "Not a Huawei laptop (detected '${vendor}') - refusing to touch the codec." >&2
+        echo "Set FORCE_UNSUPPORTED_MODEL=1 to override." >&2
         exit 1
     fi
 fi
@@ -124,24 +120,35 @@ function switch_to_headphones() {
 
 old_status=0
 
-function check_and_apply_state() {
-    local status
+# Re-assert the routing continuously, not just on jack transitions.
+#
+# This looks wasteful and is deliberate. The codec resets its connection select
+# whenever it powers down (snd_hda_intel power_save defaults to 1s) or the
+# stream restarts, which silently undoes the fix. Upstream polled at 0.3s and
+# rewrote the selection on every iteration; that constant rewriting is what
+# made the fix hold. An earlier event-driven rewrite of this script applied the
+# verbs only on plug/unplug and lost the fix within seconds of going idle.
+#
+# POLL_INTERVAL trades battery against how long a wrong route can persist.
+# Raise it only if you know your codec is not powering down.
+POLL_INTERVAL="${POLL_INTERVAL:-0.3}"
+
+while true; do
     if amixer "-c${card_index}" get Headphone 2>/dev/null | grep -q "off"; then
         status=1
+        move_output_to_speaker
     else
         status=2
+        move_output_to_headphones
     fi
+
     if [ "${status}" -ne "${old_status}" ]; then
         case "${status}" in
-            1) echo "Headphones disconnected — switching to speaker";   switch_to_speaker ;;
-            2) echo "Headphones connected — switching to headphones"; switch_to_headphones ;;
+            1) echo "Headphones disconnected - switching to speaker"; switch_to_speaker ;;
+            2) echo "Headphones connected - switching to headphones"; switch_to_headphones ;;
         esac
         old_status=${status}
     fi
-}
 
-check_and_apply_state
-
-alsactl monitor | while IFS= read -r _line; do
-    check_and_apply_state
+    sleep "${POLL_INTERVAL}"
 done

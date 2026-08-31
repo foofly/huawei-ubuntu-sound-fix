@@ -70,60 +70,57 @@ usr_is_readonly() {
 # because they do not accept third-party files in /usr/local/bin and
 # /etc/systemd/system. Checked before anything else, since these fail even when
 # the dependencies happen to be present.
-# The daemon writes raw HDA verbs to hardcoded widget numbers that are specific
-# to the MateBook 14s/16s codec layout. On other models those same numbers
-# address different widgets, so installing there does not merely fail -- it can
-# collapse the speaker onto the headphone DAC and leave the machine silent, and
-# because the unit is enabled it re-applies on every boot.
-SUPPORTED_MODELS="HKF-WXX CREF-16"
+# The daemon writes raw HDA verbs to hardcoded widget numbers. On non-Huawei
+# hardware those numbers address unrelated widgets, so refuse outright. The
+# quirk is known on more Huawei models than upstream documents (HKD-WXX is
+# affected too), so an unlisted Huawei model gets a warning rather than a
+# refusal -- a wrong guess there is recoverable with a cold boot.
+KNOWN_AFFECTED="HKF-WXX CREF-16 HKD-WXX"
 
 check_supported_model() {
-    local vendor product
-    # DMI_DIR is overridable so the model check can be exercised in tests.
+    local vendor product m
     local dmi="${DMI_DIR:-/sys/class/dmi/id}"
     vendor=$(cat "${dmi}/sys_vendor" 2>/dev/null || echo unknown)
     product=$(cat "${dmi}/product_name" 2>/dev/null || echo unknown)
 
     if [ "${FORCE_UNSUPPORTED_MODEL:-0}" = "1" ]; then
-        echo "WARNING: FORCE_UNSUPPORTED_MODEL=1 set; skipping the model check." >&2
-        echo "WARNING: detected ${vendor} ${product}. If this is not a MateBook" >&2
-        echo "WARNING: 14s or 16s you may lose audio until a cold boot." >&2
+        echo "WARNING: FORCE_UNSUPPORTED_MODEL=1 set; skipping the hardware check." >&2
         return 0
     fi
 
-    local m
-    for m in $SUPPORTED_MODELS; do
+    if [ "$vendor" != "HUAWEI" ]; then
+        cat >&2 <<MSG
+
+Refusing to install: this is not a Huawei laptop.
+
+  Detected: ${vendor} ${product}
+
+This fix issues raw HDA verbs against specific codec widgets. On unrelated
+hardware those widget numbers mean something else and can leave you with no
+audio until a full power cycle.
+
+Override with FORCE_UNSUPPORTED_MODEL=1 if you are certain.
+MSG
+        exit 1
+    fi
+
+    for m in $KNOWN_AFFECTED; do
         if [ "$product" = "$m" ]; then
-            echo "Detected supported model: ${vendor} ${product}"
+            echo "Detected known-affected model: ${vendor} ${product}"
             return 0
         fi
     done
 
     cat >&2 <<MSG
 
-Unsupported laptop model - refusing to install.
+Note: ${vendor} ${product} is not in the known-affected list
+(${KNOWN_AFFECTED}). Proceeding anyway, since the quirk affects more models
+than are documented.
 
-  Detected: ${vendor} ${product}
-  Supported: HKF-WXX (MateBook 14s), CREF-16 (MateBook 16s)
-
-This fix issues raw HDA verbs against specific codec widgets. On any other
-model those widget numbers mean something else, and applying them can leave
-you with no audio until a cold boot.
-
-Before overriding, check whether you even have the fault. Run:
-
-    cat /proc/asound/card*/codec#0 | grep -A3 '^Node 0x17'
-
-If the selected connection (marked with an asterisk) is already 0x11 rather
-than 0x10, your speaker and headphone outputs use separate DACs, your machine
-does not have this bug, and this fix will break working audio.
-
-To override anyway:
-
-    FORCE_UNSUPPORTED_MODEL=1 bash install.sh
+If audio breaks, run 'bash uninstall.sh' and then COLD BOOT -- a warm reboot
+does not reset the codec.
 
 MSG
-    exit 1
 }
 
 check_supported_platform() {

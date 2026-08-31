@@ -6,47 +6,35 @@ Linux distributions.
 
 ## Is this your problem?
 
-The fix targets one specific hardware quirk, and the installer **refuses to run
-on unsupported models** because applying it elsewhere can leave you with no
-audio until a cold boot.
+Symptom: with headphones plugged in, audio still comes out of the speakers, and
+unplugging them leaves you with no sound at all.
 
-**1. Check your model:**
-
-```bash
-cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name
-```
+Confirmed affected models:
 
 | Model | Product name |
 | --- | --- |
 | MateBook 14s | `HKF-WXX` |
 | MateBook 16s | `CREF-16` |
-
-**2. Check you actually have the fault** — this is the definitive test:
+| MateBook 14 | `HKD-WXX` |
 
 ```bash
-awk '/^Node 0x16 /,/^Node 0x18 /' /proc/asound/card*/codec#0 \
-  | grep -E '^Node 0x1[67]|^ +0x1[01]'
+cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name
 ```
 
-The asterisk marks the DAC each pin is currently using:
+The installer refuses on non-Huawei hardware, where the raw HDA verbs would hit
+unrelated widgets. Unlisted Huawei models are allowed through with a warning —
+the quirk affects more models than upstream documented.
 
-```
-Node 0x16 [Pin Complex] ...      <- headphone pin
-     0x10* 0x11
-Node 0x17 [Pin Complex] ...      <- speaker pin
-     0x10  0x11*
-```
+> **Do not try to diagnose this from the codec dump.** It is tempting to read
+> `/proc/asound/card*/codec#0` and check which DAC pin `0x17` selects, but
+> widget `0x17` *ignores its own connection select and follows `0x16`* — that is
+> the whole bug. The register reports the nominal value, not the effective
+> routing, so a machine that looks correctly routed can still be affected. Trust
+> the symptom, not the dump.
 
-* **`0x17` shows `0x11*`** — speaker and headphones already use separate DACs.
-  Your machine **does not have this bug**, and installing will break working
-  audio. Stop here.
-* **`0x17` shows `0x10*`** — both outputs are collapsed onto the headphone DAC.
-  That is the fault this fixes.
-
-Other Huawei models (MateBook 14, D14, D15) are **not** covered. If you are
-certain you want to proceed on an unlisted model, `FORCE_UNSUPPORTED_MODEL=1`
-overrides both the installer and the daemon — but read the warning above first,
-and know that recovery requires a full power cycle, not a reboot.
+If something goes wrong, run `bash uninstall.sh` and then **cold boot**. A warm
+reboot does not reset the codec, and the service re-applies on every boot until
+it is disabled.
 
 ## Install
 
@@ -124,12 +112,23 @@ and `pactl list sinks short`.
 
 ## How it works
 
-An event-driven daemon watches for jack connect/disconnect events via
-`alsactl monitor` — no polling loop — and issues the HDA verbs needed to route
-audio correctly. It discovers the sound card index and the audio sink at
-runtime, and works with both PulseAudio and PipeWire through `pactl`. Because
-the daemon runs as root, `pactl` calls are re-entered into the desktop user's
-session via `runuser`.
+A daemon polls the headphone jack and **continuously re-asserts** the HDA
+routing verbs, by default every 0.3s (`POLL_INTERVAL`). It discovers the sound
+card index and the audio sink at runtime, and works with both PulseAudio and
+PipeWire through `pactl`. Because the daemon runs as root, `pactl` calls are
+re-entered into the desktop user's session via `runuser`.
+
+### Why it polls instead of using events
+
+The constant re-assertion is the fix, not an inefficiency. The codec resets its
+connection select whenever it powers down — `snd_hda_intel power_save` defaults
+to 1 second — or when the stream restarts, silently undoing the routing. Polling
+at 0.3s simply out-paces that.
+
+An event-driven version using `alsactl monitor` was tried and reverted: applying
+the verbs only on plug/unplug meant the fix was lost within seconds of the codec
+going idle. If you want to reduce the wakeups, raise `POLL_INTERVAL` or set
+`snd_hda_intel power_save=0`, and verify audio still survives an idle period.
 
 ### The hardware quirk
 
