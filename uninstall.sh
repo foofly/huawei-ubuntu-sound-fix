@@ -31,6 +31,11 @@ done
 "${SUDO[@]}" rmdir --ignore-fail-on-non-empty "/var/lib/${SERVICE_NAME}/bin" \
     "/var/lib/${SERVICE_NAME}" 2>/dev/null || true
 
+echo "Restoring HDA codec power saving..."
+"${SUDO[@]}" rm -f /etc/modprobe.d/huawei-matebook-audio-fix.conf
+# 1 is the snd_hda_intel default; only meaningful until the next reboot anyway.
+echo 1 | "${SUDO[@]}" tee /sys/module/snd_hda_intel/parameters/power_save >/dev/null 2>&1 || true
+
 echo "Removing service..."
 "${SUDO[@]}" rm -f "$UNIT_PATH"
 "${SUDO[@]}" systemctl daemon-reload

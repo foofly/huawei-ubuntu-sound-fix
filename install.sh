@@ -281,6 +281,36 @@ pick_bindir() {
     fi
 }
 
+MODPROBE_CONF="/etc/modprobe.d/huawei-matebook-audio-fix.conf"
+
+# The codec resets its routing every time it powers down, which is why the
+# daemon has to keep rewriting it. Disabling power saving makes the resets
+# rare, letting the daemon poll at 3s instead of 0.3s -- about a 10x cut in
+# wakeups. Applied at runtime too, so the benefit does not wait for a reboot.
+configure_power_save() {
+    echo "Disabling HDA codec power saving (${MODPROBE_CONF})..."
+    if [ "$DRY_RUN" = "1" ]; then
+        echo "  [dry-run] write ${MODPROBE_CONF}"
+    else
+        printf '%s\n' \
+            '# Installed by huawei-matebook-audio-fix.' \
+            '# The codec resets its HDA routing on power-down, which undoes the fix.' \
+            '# Keeping it powered lets the daemon poll far less aggressively.' \
+            'options snd_hda_intel power_save=0' \
+            | "${SUDO[@]}" tee "$MODPROBE_CONF" >/dev/null
+    fi
+
+    # Take effect now as well; the daemon picks its interval from this value.
+    if [ -w /sys/module/snd_hda_intel/parameters/power_save ] || [ "$(id -u)" -eq 0 ] || [ -n "${SUDO[*]}" ]; then
+        if [ "$DRY_RUN" = "1" ]; then
+            echo "  [dry-run] echo 0 > /sys/module/snd_hda_intel/parameters/power_save"
+        else
+            echo 0 | "${SUDO[@]}" tee /sys/module/snd_hda_intel/parameters/power_save >/dev/null 2>&1 \
+                || echo "  note: could not set power_save at runtime; it will apply after reboot." >&2
+        fi
+    fi
+}
+
 install_files() {
     local bindir="$1"
 
@@ -342,6 +372,7 @@ main() {
     local bindir
     bindir="$(pick_bindir)"
     install_files "$bindir"
+    configure_power_save
     enable_service
 }
 

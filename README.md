@@ -121,14 +121,29 @@ re-entered into the desktop user's session via `runuser`.
 ### Why it polls instead of using events
 
 The constant re-assertion is the fix, not an inefficiency. The codec resets its
-connection select whenever it powers down — `snd_hda_intel power_save` defaults
-to 1 second — or when the stream restarts, silently undoing the routing. Polling
-at 0.3s simply out-paces that.
+connection select whenever it powers down, silently undoing the routing.
+Re-writing it on a short interval simply out-paces that.
 
 An event-driven version using `alsactl monitor` was tried and reverted: applying
 the verbs only on plug/unplug meant the fix was lost within seconds of the codec
-going idle. If you want to reduce the wakeups, raise `POLL_INTERVAL` or set
-`snd_hda_intel power_save=0`, and verify audio still survives an idle period.
+going idle.
+
+### Poll interval and power saving
+
+Because the resets are caused by codec power-down, the installer disables it via
+`/etc/modprobe.d/huawei-matebook-audio-fix.conf` (`snd_hda_intel power_save=0`),
+and the daemon picks its interval from that setting:
+
+| `power_save` | Default `POLL_INTERVAL` | Measured CPU |
+| --- | --- | --- |
+| `0` (set by the installer) | 3s | ~0.35% of one core |
+| `1` (kernel default) | 0.3s | ~3.2% of one core |
+
+Deriving the interval this way means the two settings cannot drift apart — before
+the reboot that activates the modprobe option, the daemon still uses the safe
+0.3s interval, and relaxes automatically afterwards. Override explicitly with
+`POLL_INTERVAL` if you want to tune it yourself; `uninstall.sh` restores the
+default power-saving behaviour.
 
 ### The hardware quirk
 

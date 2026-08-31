@@ -129,9 +129,28 @@ old_status=0
 # made the fix hold. An earlier event-driven rewrite of this script applied the
 # verbs only on plug/unplug and lost the fix within seconds of going idle.
 #
-# POLL_INTERVAL trades battery against how long a wrong route can persist.
-# Raise it only if you know your codec is not powering down.
-POLL_INTERVAL="${POLL_INTERVAL:-0.3}"
+# How fast we need to poll depends entirely on whether the codec is allowed to
+# power down, so derive the default from that rather than making the user keep
+# two settings in sync:
+#
+#   power_save=0  -> the codec stays up, resets are rare, 3s is plenty
+#   power_save=1  -> it sleeps after ~1s and resets on resume, so we must
+#                    out-pace it at 0.3s
+#
+# Read once at startup. The installer drops a modprobe.d snippet setting
+# power_save=0, so before the activating reboot this correctly picks the safe
+# fast interval, and after it relaxes automatically.
+if [ -z "${POLL_INTERVAL:-}" ]; then
+    power_save=$(cat /sys/module/snd_hda_intel/parameters/power_save 2>/dev/null || echo 1)
+    if [ "${power_save}" = "0" ]; then
+        POLL_INTERVAL=3
+    else
+        POLL_INTERVAL=0.3
+    fi
+    echo "power_save=${power_save}, using POLL_INTERVAL=${POLL_INTERVAL}"
+else
+    echo "POLL_INTERVAL=${POLL_INTERVAL} (set explicitly)"
+fi
 
 while true; do
     if amixer "-c${card_index}" get Headphone 2>/dev/null | grep -q "off"; then
