@@ -13,15 +13,14 @@ set -eo pipefail
 
 pidof -o %PPID -x "$0" >/dev/null && echo "Script $0 already running" && exit 1
 
-# Refuse on non-Huawei hardware. The verbs below target hardcoded widget
-# numbers; elsewhere they address different widgets and can silence the machine
-# until a cold boot. Unlisted Huawei models are allowed through: the quirk is
-# known on more of them than upstream documents.
+# Refuse unless the Conexant CX11880 is present. The verbs below target that
+# codec's widget numbers; elsewhere they address different widgets and can
+# silence the machine until a cold boot. Checked here as well as in the
+# installer because this re-applies on every boot.
 if [ "${FORCE_UNSUPPORTED_MODEL:-0}" != "1" ]; then
-    dmi="${DMI_DIR:-/sys/class/dmi/id}"
-    vendor=$(cat "${dmi}/sys_vendor" 2>/dev/null || echo unknown)
-    if [ "$vendor" != "HUAWEI" ]; then
-        echo "Not a Huawei laptop (detected '${vendor}') - refusing to touch the codec." >&2
+    if ! grep -h '^Codec:' "${PROC_ASOUND:-/proc/asound}"/card*/codec#* 2>/dev/null \
+         | grep -qF 'Conexant CX11880'; then
+        echo "No Conexant CX11880 codec found - refusing to touch the codec." >&2
         echo "Set FORCE_UNSUPPORTED_MODEL=1 to override." >&2
         exit 1
     fi

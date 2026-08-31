@@ -9,32 +9,40 @@ Linux distributions.
 Symptom: with headphones plugged in, audio still comes out of the speakers, and
 unplugging them leaves you with no sound at all.
 
-Confirmed affected models:
-
-| Model | Product name |
-| --- | --- |
-| MateBook 14s | `HKF-WXX` |
-| MateBook 16s | `CREF-16` |
-| MateBook 14 | `HKD-WXX` |
+The quirk lives in the **codec**, not the chassis, so that is what to check:
 
 ```bash
-cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name
+grep -h '^Codec:' /proc/asound/card*/codec#*
 ```
 
-The installer refuses on non-Huawei hardware, where the raw HDA verbs would hit
-unrelated widgets. Unlisted Huawei models are allowed through with a warning —
-the quirk affects more models than upstream documented.
+If that lists `Conexant CX11880` on a Huawei MateBook, this applies to you. The
+installer and the daemon both check for it and refuse otherwise, since the raw
+HDA verbs target that codec's specific widgets (`0x10`/`0x11` DACs, `0x16`
+headphone pin, `0x17` speaker) and address unrelated hardware elsewhere.
 
-> **Do not try to diagnose this from the codec dump.** It is tempting to read
-> `/proc/asound/card*/codec#0` and check which DAC pin `0x17` selects, but
-> widget `0x17` *ignores its own connection select and follows `0x16`* — that is
-> the whole bug. The register reports the nominal value, not the effective
-> routing, so a machine that looks correctly routed can still be affected. Trust
-> the symptom, not the dump.
+Model codes seen affected so far — the same codec ships under several, so this
+list is illustrative rather than a whitelist:
 
-If something goes wrong, run `bash uninstall.sh` and then **cold boot**. A warm
-reboot does not reset the codec, and the service re-applies on every boot until
-it is disabled.
+| `product_name` | Notes |
+| --- | --- |
+| `HKF-WXX` | MateBook 14s; upstream's development machine |
+| `CREF-16` | MateBook 16s; reported upstream |
+| `HKD-WXX` | Confirmed working, and the only hardware this fork is tested on |
+
+```bash
+cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_family /sys/class/dmi/id/product_name
+```
+
+Override the check with `FORCE_UNSUPPORTED_MODEL=1` if you are certain, but note
+that a wrong guess can leave you with no audio until a full power cycle — a warm
+reboot does **not** reset the codec, and the service re-applies on every boot
+until disabled. Recovery is `bash uninstall.sh` followed by a cold boot.
+
+> **Do not try to diagnose this from the codec dump's connection selects.** It is
+> tempting to check which DAC pin `0x17` reports, but widget `0x17` *ignores its
+> own connection select and follows `0x16`* — that is the whole bug. The register
+> shows the nominal value, not the effective routing, so an affected machine can
+> look correctly routed. Trust the symptom.
 
 ## Install
 
@@ -103,10 +111,12 @@ Be aware of what has and has not been tested:
 | Installer branch selection | Verified — dry-run matrix across Fedora, Ubuntu, Arch, openSUSE, plus stubbed `rpm-ostree`, `transactional-update`, SteamOS, NixOS and Ubuntu Core |
 | Shell correctness | Verified — `shellcheck` clean, `systemd-analyze verify` clean |
 | Sink and session discovery | Verified on a PipeWire/Wayland host |
-| **HDA codec writes on real hardware** | **Not verified** — no MateBook 14s/16s available |
+| HDA codec writes on real hardware | Verified on a MateBook `HKD-WXX` (Conexant CX11880) — correct routing with and without headphones, surviving idle periods and reboots |
+| Poll interval / power-save tuning | Verified — 0.20% of one core at `POLL_INTERVAL=3` with `power_save=0`, versus 3.2% at 0.3s |
+| **Other model codes (`HKF-WXX`, `CREF-16`)** | **Not verified** by this fork — inherited from upstream reports |
 | **Atomic layering then reboot** | **Not verified** on a real Silverblue/Kinoite/MicroOS install |
 
-Reports from people with the actual hardware are very welcome — please include
+Reports from other model codes are very welcome — please include
 your model, distro, `journalctl -u huawei-soundcard-headphones-monitor` output
 and `pactl list sinks short`.
 

@@ -70,57 +70,48 @@ usr_is_readonly() {
 # because they do not accept third-party files in /usr/local/bin and
 # /etc/systemd/system. Checked before anything else, since these fail even when
 # the dependencies happen to be present.
-# The daemon writes raw HDA verbs to hardcoded widget numbers. On non-Huawei
-# hardware those numbers address unrelated widgets, so refuse outright. The
-# quirk is known on more Huawei models than upstream documents (HKD-WXX is
-# affected too), so an unlisted Huawei model gets a warning rather than a
-# refusal -- a wrong guess there is recoverable with a cold boot.
-KNOWN_AFFECTED="HKF-WXX CREF-16 HKD-WXX"
+# The quirk lives in the codec, not the chassis. These verbs target specific
+# Conexant CX11880 widgets (0x10/0x11 DACs, 0x16 HP pin, 0x17 speaker), so the
+# codec is the thing worth checking -- model strings were only ever a proxy for
+# it, and an inaccurate one: the same codec ships under several MateBook model
+# codes (HKF-WXX, CREF-16, HKD-WXX all seen affected).
+REQUIRED_CODEC="Conexant CX11880"
 
-check_supported_model() {
-    local vendor product m
+check_supported_hardware() {
+    local vendor product family codecs
     local dmi="${DMI_DIR:-/sys/class/dmi/id}"
     vendor=$(cat "${dmi}/sys_vendor" 2>/dev/null || echo unknown)
     product=$(cat "${dmi}/product_name" 2>/dev/null || echo unknown)
+    family=$(cat "${dmi}/product_family" 2>/dev/null || echo unknown)
 
     if [ "${FORCE_UNSUPPORTED_MODEL:-0}" = "1" ]; then
         echo "WARNING: FORCE_UNSUPPORTED_MODEL=1 set; skipping the hardware check." >&2
         return 0
     fi
 
-    if [ "$vendor" != "HUAWEI" ]; then
-        cat >&2 <<MSG
-
-Refusing to install: this is not a Huawei laptop.
-
-  Detected: ${vendor} ${product}
-
-This fix issues raw HDA verbs against specific codec widgets. On unrelated
-hardware those widget numbers mean something else and can leave you with no
-audio until a full power cycle.
-
-Override with FORCE_UNSUPPORTED_MODEL=1 if you are certain.
-MSG
-        exit 1
+    codecs=$(grep -h '^Codec:' "${PROC_ASOUND:-/proc/asound}"/card*/codec#* 2>/dev/null || true)
+    if printf '%s' "$codecs" | grep -qF "$REQUIRED_CODEC"; then
+        echo "Detected ${vendor} ${family} ${product} with ${REQUIRED_CODEC}"
+        return 0
     fi
-
-    for m in $KNOWN_AFFECTED; do
-        if [ "$product" = "$m" ]; then
-            echo "Detected known-affected model: ${vendor} ${product}"
-            return 0
-        fi
-    done
 
     cat >&2 <<MSG
 
-Note: ${vendor} ${product} is not in the known-affected list
-(${KNOWN_AFFECTED}). Proceeding anyway, since the quirk affects more models
-than are documented.
+Refusing to install: no ${REQUIRED_CODEC} codec found.
 
-If audio breaks, run 'bash uninstall.sh' and then COLD BOOT -- a warm reboot
-does not reset the codec.
+  Machine: ${vendor} ${family} ${product}
+  Codecs:  ${codecs:-none detected}
+
+This fix issues raw HDA verbs against widgets specific to that codec. On other
+hardware those widget numbers address something else and can leave you with no
+audio until a full power cycle.
+
+If you are certain, override with:
+
+    FORCE_UNSUPPORTED_MODEL=1 bash install.sh
 
 MSG
+    exit 1
 }
 
 check_supported_platform() {
@@ -364,7 +355,7 @@ main() {
     [ -f "${SRC_DIR}/${SCRIPT_FILE}" ] || die "${SCRIPT_FILE} not found next to installer."
     [ -f "${SRC_DIR}/${UNIT_FILE}" ]   || die "${UNIT_FILE} not found next to installer."
 
-    check_supported_model
+    check_supported_hardware
     check_supported_platform
     setup_privileges
     install_dependencies
