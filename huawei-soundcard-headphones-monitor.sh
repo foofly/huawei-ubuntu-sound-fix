@@ -43,8 +43,55 @@ function switch_to_speaker() {
     hda 0x1  0x715 0x2      # disable headphone GPIO
 }
 
+# This daemon runs as root, which has no route to the desktop user's sound
+# server, so every pactl call has to be re-entered into that user's session.
+function find_desktop_uid() {
+    local sid uid type
+    while read -r sid uid _; do
+        [ -n "$sid" ] || continue
+        type=$(loginctl show-session "$sid" -p Type --value 2>/dev/null) || continue
+        if [ "$type" = "wayland" ] || [ "$type" = "x11" ]; then
+            echo "$uid"
+            return 0
+        fi
+    done < <(loginctl list-sessions --no-legend 2>/dev/null)
+    return 0
+}
+
+function as_desktop_user() {
+    local uid="$1"
+    shift
+    runuser -u "#${uid}" -- env "XDG_RUNTIME_DIR=/run/user/${uid}" "$@"
+}
+
+# Every sink on this card shares the "hda_dsp" substring, HDMI ones included,
+# so they must be excluded explicitly or HDMI wins on output order. Matching by
+# pattern rather than a hardcoded PCI path keeps this working across machines
+# and across PulseAudio vs PipeWire naming.
 function get_sink_name() {
-    pactl list sinks short 2>/dev/null | awk '/sofhdadsp/ {print $2; exit}'
+    local uid="$1"
+    as_desktop_user "$uid" pactl list sinks short 2>/dev/null \
+        | awk '$2 ~ /sofhdadsp|sof-hda-dsp|hda_dsp/ && $2 !~ /[Hh][Dd][Mm][Ii]/ { print $2; exit }'
+}
+
+function set_audio_port() {
+    local port="$1"
+    local uid sink
+
+    uid=$(find_desktop_uid)
+    if [ -z "$uid" ] || [ ! -d "/run/user/${uid}" ]; then
+        return 0
+    fi
+
+    sink=$(get_sink_name "$uid")
+    if [ -z "$sink" ]; then
+        echo "Warning: sofhdadsp sink not found via pactl - skipping port switch" >&2
+        return 0
+    fi
+
+    # Best-effort: the hda-verb routing above is what actually fixes the audio,
+    # and this script runs under set -e.
+    as_desktop_user "$uid" pactl set-sink-port "$sink" "$port" >/dev/null 2>&1 || true
 }
 
 function switch_to_headphones() {
@@ -54,13 +101,7 @@ function switch_to_headphones() {
     hda 0x1  0x716 0x2      # pin sense: enable
     hda 0x1  0x715 0x0      # GPIO: clear pin
 
-    local sink
-    sink=$(get_sink_name)
-    if [ -n "${sink}" ]; then
-        pactl set-sink-port "${sink}" "[Out] Headphones" 2>/dev/null || true
-    else
-        echo "Warning: sofhdadsp sink not found via pactl — skipping port switch" >&2
-    fi
+    set_audio_port "[Out] Headphones"
 }
 
 old_status=0

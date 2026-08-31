@@ -1,13 +1,14 @@
 [Unit]
 Description=Huawei soundcard headphones monitor
 After=sound.target
-
-[Service]
-ExecStart=/usr/local/bin/huawei-soundcard-headphones-monitor.sh
-Restart=always
-RestartSec=5
+# These are [Unit] directives; systemd silently ignores them under [Service].
 StartLimitIntervalSec=60
 StartLimitBurst=5
+
+[Service]
+ExecStart=@BINDIR@/huawei-soundcard-headphones-monitor.sh
+Restart=always
+RestartSec=5
 User=root
 
 [Install]

@@ -1,29 +1,43 @@
-# Huawei Matebook 14s / 16s soundcard fix for Ubuntu / Fedora / Fedora Atomic / Arch / openSUSE MicroOS / PipeWire
+# Huawei MateBook Audio Fix
+
+Fixes the swapped headphone/speaker routing on Huawei MateBook 14s / 16s laptops
+on Linux, across both traditional and immutable (atomic) distributions.
+
+> This is a fork of [Smoren/huawei-ubuntu-sound-fix](https://github.com/Smoren/huawei-ubuntu-sound-fix),
+> maintained independently. See [Credits](#credits).
 
 ## Problem
 
-The headphone and speaker channels are mixed up in the sound card driver for Linux distributions.
+The headphone and speaker channels are mixed up in the sound card driver. When
+headphones are connected the system sends audio to the speakers, and when they
+are unplugged it tries to output through the headphones.
 
-When headphones are connected, the system considers that sound should be output from the speakers. When the headphones are off, the system tries to output sound through them.
+### Problem details
 
-### Problem details (found [here](https://github.com/thesofproject/linux/issues/3350#issuecomment-1301070327))
+Found in [thesofproject/linux#3350](https://github.com/thesofproject/linux/issues/3350#issuecomment-1301070327).
+The interesting HDA widgets are:
 
-Looks like there is some weird hardware design, because from my prospective, the interesting widgets are:
-* 0x01 - Audio Function Group
-* 0x10 - Headphones DAC (really both devices connected here)
-* 0x11 - Speaker DAC
-* 0x16 - Headphones Jack
-* 0x17 - Internal Speaker
+| Widget | Role |
+| --- | --- |
+| `0x01` | Audio Function Group |
+| `0x10` | Headphones DAC (both devices are really connected here) |
+| `0x11` | Speaker DAC |
+| `0x16` | Headphones Jack |
+| `0x17` | Internal Speaker |
 
-And:
-
-* widgets 0x16 and 0x17 simply should be connected to different DACs 0x10 and 0x11, but Internal Speaker 0x17 ignores the connection select command and use the value from Headphones Jack 0x16.
-* Headphone Jack 0x16 is controlled with some weird stuff so it should be enabled with GPIO commands for Audio Group 0x01.
-* Internal Speaker 0x17 is coupled with Headphone Jack 0x16 so it should be explicitly disabled with EAPD/BTL Enable command.
+* Widgets `0x16` and `0x17` should connect to different DACs (`0x10` and `0x11`),
+  but Internal Speaker `0x17` ignores the connection-select command and uses the
+  value from Headphones Jack `0x16`.
+* Headphone Jack `0x16` must be enabled with GPIO commands on Audio Group `0x01`.
+* Internal Speaker `0x17` is coupled to `0x16`, so it must be explicitly disabled
+  with the EAPD/BTL Enable command.
 
 ## Solution
 
-An event-driven daemon monitors headphone jack connect/disconnect events using `alsactl monitor` (no polling) and issues HDA verb commands to switch routing. It works with both PulseAudio and PipeWire (via `pactl`) and dynamically discovers the sound card index and audio sink at runtime.
+An event-driven daemon watches for jack connect/disconnect events via
+`alsactl monitor` — no polling loop — and issues the HDA verbs needed to route
+audio correctly. It discovers the sound card index and the audio sink at
+runtime, and works with both PulseAudio and PipeWire through `pactl`.
 
 ## Install
 
@@ -31,44 +45,85 @@ An event-driven daemon monitors headphone jack connect/disconnect events using `
 bash install.sh
 ```
 
-The script automatically detects your package manager (`apt`, `pacman`, `eopkg`, `transactional-update`, `zypper`, `dnf`, or `rpm-ostree`) and installs the required dependencies.
+Set `DRY_RUN=1` to print every privileged command without changing anything:
 
-> **Fedora Atomic desktops** (Silverblue, Kinoite, Sericea, etc.): the script uses `rpm-ostree` to install packages. A **reboot is required** after installation before the service becomes active.
+```bash
+DRY_RUN=1 bash install.sh
+```
 
-> **openSUSE MicroOS / Aeon / Kalpa**: the script uses `transactional-update` to install packages. A **reboot is required** after installation before the service becomes active.
+The installer only installs `alsa-tools` (for `hda-verb`) and `alsa-utils` (for
+`amixer` and `alsactl monitor`) if they are actually missing, so on images that
+already ship them nothing is layered and no reboot is needed.
 
-> **NixOS**: automatic installation is not supported. Please install `alsa-tools` and `alsa-utils` via `configuration.nix`, then manually copy the service files and enable them.
+### Supported platforms
+
+Atomic distributions still ship `dnf`, `zypper` or `pacman` even though `/usr`
+is read-only, so the installer checks for the atomic tooling **first** —
+otherwise the classic manager matches and fails against a read-only root.
+
+| Platform | Handling |
+| --- | --- |
+| Ubuntu / Debian, Arch, Fedora, openSUSE, Solus | Standard install via `apt`, `pacman`, `dnf`, `zypper` or `eopkg`. |
+| Fedora Silverblue / Kinoite / Sericea / Bazzite | Detected via `/run/ostree-booted`; dependencies layered with `rpm-ostree`. **Reboot required** — they exist only in the next deployment. The service is enabled and starts automatically after reboot. |
+| openSUSE MicroOS / Aeon / Kalpa | Dependencies installed into a new snapshot with `transactional-update`. **Reboot required.** |
+| SteamOS | The daemon installs normally, but the installer will not unlock the read-only root for you: SteamOS keyrings are often unusable and anything installed that way is wiped by the next system update. If `hda-verb` is missing it prints the exact steps and exits. |
+| NixOS | Not supported — a declarative system needs a proper module, not an imperative installer. The script explains what to add to `configuration.nix` and exits. |
+| Ubuntu Core | Not supported. Third parties cannot add units to `/etc/systemd/system`, and no snap interface grants raw HDA codec access on `/dev/snd/hwC0D0`. |
+
+The daemon is installed to `/usr/local/bin` where writable, falling back to
+`/var/lib/huawei-soundcard-headphones-monitor/bin`. On ostree systems
+`/usr/local` already points at `/var/usrlocal`, so both locations survive system
+updates.
+
+## Uninstall
+
+```bash
+bash uninstall.sh
+```
+
+Stops and disables the service and removes the installed files. Layered
+`alsa-tools` / `alsa-utils` packages are left alone; the script prints the
+`rpm-ostree uninstall` / `transactional-update pkg remove` commands if you want
+them gone too.
 
 ## Daemon control commands
+
 ```bash
 systemctl status huawei-soundcard-headphones-monitor
 systemctl restart huawei-soundcard-headphones-monitor
 systemctl start huawei-soundcard-headphones-monitor
 systemctl stop huawei-soundcard-headphones-monitor
+journalctl -fu huawei-soundcard-headphones-monitor
 ```
 
 ## Environment
 
-This fix works under Ubuntu 22.04+, Fedora 39+, Fedora Atomic desktops (Silverblue, Kinoite), and openSUSE MicroOS/Aeon/Kalpa for laptop model Huawei MateBook 14s. Both PulseAudio and PipeWire audio stacks are supported.
+Developed against the Huawei MateBook 14s (HKF-WXX). Reported working on Ubuntu
+22.04+, Fedora 39+, Fedora Atomic desktops and openSUSE MicroOS/Aeon/Kalpa, with
+both PulseAudio and PipeWire.
 
-```bash
-$ inxi -F
-System:
-  Host: smorenbook Kernel: 5.15.0-78-generic x86_64 bits: 64
-    Desktop: GNOME 42.9 Distro: Ubuntu 22.04.3 LTS (Jammy Jellyfish)
+```
 Machine:
   Type: Laptop System: HUAWEI product: HKF-WXX v: M1010
-    serial: <superuser required>
-  Mobo: HUAWEI model: HKF-WXX-PCB v: M1010 serial: <superuser required>
-    UEFI: HUAWEI v: 1.06 date: 07/22/2022
+  Mobo: HUAWEI model: HKF-WXX-PCB v: M1010
+  UEFI: HUAWEI v: 1.06 date: 07/22/2022
 ```
 
-## Say thanks
+## Credits
 
-If you want to thank me for this solution, you can subscribe to my [Github profile](https://github.com/Smoren) and also give stars to [my open source projects](https://github.com/Smoren?tab=repositories&q=&type=public&language=&sort=stargazers), e.g.:
-* [MolecuLarva](https://github.com/Smoren/molecular-ts) — Virtual chemistry simultaion. Visualization of the behavior of particles in 2-dimensional and 3-dimensional space for artifical life research.
-* [IterTools TS](https://github.com/Smoren/itertools-ts) — Extended itertools port for TypeScript and JavaScript. Provides a huge set of functions for working with iterable collections (including async ones).
-* [Genetic Search TS](https://github.com/Smoren/genetic-search-ts) — Multiprocessing Genetic Algorithm Implementation for TypeScript.
-* [AbstractRepo](https://github.com/Smoren/abstractrepo-pypi) - Python Abstract Repository Pattern Components (with SQLAlchemy support).
-* [Schemator PHP](https://github.com/Smoren/schemator-php) — Schematic data mapper for converting nested data structures (any composition of associative arrays, non-associative arrays and objects) according to the given conversion schema.
-* [ArrayView PHP](https://github.com/Smoren/array-view-php) — tools to create array views for easy data manipulation, select elements using Python-like slice notation, enable efficient selection of elements using index lists and boolean masks.
+Original project and the hardware reverse-engineering behind this fix:
+**[Smoren](https://github.com/Smoren)** —
+[Smoren/huawei-ubuntu-sound-fix](https://github.com/Smoren/huawei-ubuntu-sound-fix).
+
+Upstream contributors whose work is included here: Arnaud Rebillout,
+Bill Kav, KharLexis, maksimetny, Simone Checchia, Tim Kainz, Vladimir Kopylov
+and Wartybix.
+
+## Licensing
+
+The upstream project was published without a license, so it remains under
+default copyright held by its contributors. No license can be added here
+retroactively over other people's work. This fork exists as a GitHub fork under
+the [GitHub Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#5-license-grant-to-other-users)
+§D.5 fork grant. If you intend to redistribute this code elsewhere, please seek
+clarification from the original authors first.
