@@ -1,21 +1,117 @@
 # Huawei MateBook Audio Fix
 
-Fixes the swapped headphone/speaker routing on Huawei MateBook 14s / 16s laptops
-on Linux, across both traditional and immutable (atomic) distributions.
+**Headphones play through the speakers, and unplugging them silences everything.**
+This fixes that on Huawei MateBook 14s / 16s, on both traditional and immutable
+Linux distributions.
 
-> This is a fork of [Smoren/huawei-ubuntu-sound-fix](https://github.com/Smoren/huawei-ubuntu-sound-fix),
-> maintained independently. See [Credits](#credits).
+## Is this your problem?
 
-## Problem
+The fix targets one specific hardware quirk. Check you have it before installing:
 
-The headphone and speaker channels are mixed up in the sound card driver. When
-headphones are connected the system sends audio to the speakers, and when they
-are unplugged it tries to output through the headphones.
+```bash
+cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name
+grep sof-hda-dsp /proc/asound/cards
+```
 
-### Problem details
+You want `HUAWEI` plus one of these models, **and** a `sof-hda-dsp` card:
 
-Found in [thesofproject/linux#3350](https://github.com/thesofproject/linux/issues/3350#issuecomment-1301070327).
-The interesting HDA widgets are:
+| Model | Product name |
+| --- | --- |
+| MateBook 14s | `HKF-WXX` |
+| MateBook 16s | `CREF-16` |
+
+If your model differs, this will probably not help and may make things worse —
+the daemon writes raw HDA verbs to specific codec widgets, and those node
+numbers mean different things on other hardware. Other Huawei models (MateBook
+14, D14, D15) are **not** covered.
+
+## Install
+
+```bash
+bash install.sh
+```
+
+Preview every privileged command without changing anything:
+
+```bash
+DRY_RUN=1 bash install.sh
+```
+
+Dependencies (`alsa-tools` for `hda-verb`, `alsa-utils` for `amixer` and
+`alsactl`) are installed only if actually missing, so on images that already
+ship them nothing is layered and no reboot is needed.
+
+### Supported platforms
+
+Atomic distributions still ship `dnf`, `zypper` or `pacman` even though `/usr`
+is read-only, so the installer checks for the atomic tooling **first** —
+otherwise the classic manager matches and then fails against a read-only root.
+
+| Platform | Handling |
+| --- | --- |
+| Ubuntu / Debian, Arch, Fedora, openSUSE, Solus | Standard install via `apt`, `pacman`, `dnf`, `zypper` or `eopkg`. |
+| Fedora Silverblue / Kinoite / Sericea / Bazzite | Detected via `/run/ostree-booted`; layered with `rpm-ostree`. **Reboot required** — the packages exist only in the next deployment. The service is enabled and starts automatically after reboot. |
+| openSUSE MicroOS / Aeon / Kalpa | Installed into a new snapshot with `transactional-update`. **Reboot required.** |
+| SteamOS | The daemon installs normally, but the installer will not unlock the read-only root for you: SteamOS keyrings are often unusable and anything installed that way is wiped by the next system update. If `hda-verb` is missing it prints the exact steps and exits. |
+| NixOS | Not supported — a declarative system needs a proper module, not an imperative installer. The script explains what to add to `configuration.nix`, then exits. |
+| Ubuntu Core | Not supported. Third parties cannot add units to `/etc/systemd/system`, and no snap interface grants raw HDA codec access on `/dev/snd/hwC0D0`. |
+
+The daemon installs to `/usr/local/bin` where writable, falling back to
+`/var/lib/huawei-soundcard-headphones-monitor/bin`. On ostree systems
+`/usr/local` already points at `/var/usrlocal`, so both survive system updates.
+
+## Uninstall
+
+```bash
+bash uninstall.sh
+```
+
+Stops and disables the service and removes the installed files, including the
+legacy `/var/usrlocal/bin` path used by earlier versions. Layered packages are
+left alone; the script prints the `rpm-ostree uninstall` /
+`transactional-update pkg remove` commands if you want those gone too.
+
+## Daemon control
+
+```bash
+systemctl status huawei-soundcard-headphones-monitor
+systemctl restart huawei-soundcard-headphones-monitor
+systemctl stop huawei-soundcard-headphones-monitor
+journalctl -fu huawei-soundcard-headphones-monitor
+```
+
+The log prints a line on each transition, so plugging and unplugging headphones
+while watching `journalctl -fu` is the quickest way to confirm it is working.
+
+## Verification status
+
+Be aware of what has and has not been tested:
+
+| | Status |
+| --- | --- |
+| Installer branch selection | Verified — dry-run matrix across Fedora, Ubuntu, Arch, openSUSE, plus stubbed `rpm-ostree`, `transactional-update`, SteamOS, NixOS and Ubuntu Core |
+| Shell correctness | Verified — `shellcheck` clean, `systemd-analyze verify` clean |
+| Sink and session discovery | Verified on a PipeWire/Wayland host |
+| **HDA codec writes on real hardware** | **Not verified** — no MateBook 14s/16s available |
+| **Atomic layering then reboot** | **Not verified** on a real Silverblue/Kinoite/MicroOS install |
+
+Reports from people with the actual hardware are very welcome — please include
+your model, distro, `journalctl -u huawei-soundcard-headphones-monitor` output
+and `pactl list sinks short`.
+
+## How it works
+
+An event-driven daemon watches for jack connect/disconnect events via
+`alsactl monitor` — no polling loop — and issues the HDA verbs needed to route
+audio correctly. It discovers the sound card index and the audio sink at
+runtime, and works with both PulseAudio and PipeWire through `pactl`. Because
+the daemon runs as root, `pactl` calls are re-entered into the desktop user's
+session via `runuser`.
+
+### The hardware quirk
+
+Diagnosed in [thesofproject/linux#3350](https://github.com/thesofproject/linux/issues/3350#issuecomment-1301070327).
+The relevant HDA widgets are:
 
 | Widget | Role |
 | --- | --- |
@@ -32,92 +128,15 @@ The interesting HDA widgets are:
 * Internal Speaker `0x17` is coupled to `0x16`, so it must be explicitly disabled
   with the EAPD/BTL Enable command.
 
-## Solution
-
-An event-driven daemon watches for jack connect/disconnect events via
-`alsactl monitor` — no polling loop — and issues the HDA verbs needed to route
-audio correctly. It discovers the sound card index and the audio sink at
-runtime, and works with both PulseAudio and PipeWire through `pactl`.
-
-## Install
-
-```bash
-bash install.sh
-```
-
-Set `DRY_RUN=1` to print every privileged command without changing anything:
-
-```bash
-DRY_RUN=1 bash install.sh
-```
-
-The installer only installs `alsa-tools` (for `hda-verb`) and `alsa-utils` (for
-`amixer` and `alsactl monitor`) if they are actually missing, so on images that
-already ship them nothing is layered and no reboot is needed.
-
-### Supported platforms
-
-Atomic distributions still ship `dnf`, `zypper` or `pacman` even though `/usr`
-is read-only, so the installer checks for the atomic tooling **first** —
-otherwise the classic manager matches and fails against a read-only root.
-
-| Platform | Handling |
-| --- | --- |
-| Ubuntu / Debian, Arch, Fedora, openSUSE, Solus | Standard install via `apt`, `pacman`, `dnf`, `zypper` or `eopkg`. |
-| Fedora Silverblue / Kinoite / Sericea / Bazzite | Detected via `/run/ostree-booted`; dependencies layered with `rpm-ostree`. **Reboot required** — they exist only in the next deployment. The service is enabled and starts automatically after reboot. |
-| openSUSE MicroOS / Aeon / Kalpa | Dependencies installed into a new snapshot with `transactional-update`. **Reboot required.** |
-| SteamOS | The daemon installs normally, but the installer will not unlock the read-only root for you: SteamOS keyrings are often unusable and anything installed that way is wiped by the next system update. If `hda-verb` is missing it prints the exact steps and exits. |
-| NixOS | Not supported — a declarative system needs a proper module, not an imperative installer. The script explains what to add to `configuration.nix` and exits. |
-| Ubuntu Core | Not supported. Third parties cannot add units to `/etc/systemd/system`, and no snap interface grants raw HDA codec access on `/dev/snd/hwC0D0`. |
-
-The daemon is installed to `/usr/local/bin` where writable, falling back to
-`/var/lib/huawei-soundcard-headphones-monitor/bin`. On ostree systems
-`/usr/local` already points at `/var/usrlocal`, so both locations survive system
-updates.
-
-## Uninstall
-
-```bash
-bash uninstall.sh
-```
-
-Stops and disables the service and removes the installed files. Layered
-`alsa-tools` / `alsa-utils` packages are left alone; the script prints the
-`rpm-ostree uninstall` / `transactional-update pkg remove` commands if you want
-them gone too.
-
-## Daemon control commands
-
-```bash
-systemctl status huawei-soundcard-headphones-monitor
-systemctl restart huawei-soundcard-headphones-monitor
-systemctl start huawei-soundcard-headphones-monitor
-systemctl stop huawei-soundcard-headphones-monitor
-journalctl -fu huawei-soundcard-headphones-monitor
-```
-
-## Environment
-
-Developed against the Huawei MateBook 14s (HKF-WXX). Reported working on Ubuntu
-22.04+, Fedora 39+, Fedora Atomic desktops and openSUSE MicroOS/Aeon/Kalpa, with
-both PulseAudio and PipeWire.
-
-```
-Machine:
-  Type: Laptop System: HUAWEI product: HKF-WXX v: M1010
-  Mobo: HUAWEI model: HKF-WXX-PCB v: M1010
-  UEFI: HUAWEI v: 1.06 date: 07/22/2022
-```
-
 ## Credits
 
 Original project and the hardware reverse-engineering behind this fix:
 **[Smoren](https://github.com/Smoren)** —
 [Smoren/huawei-ubuntu-sound-fix](https://github.com/Smoren/huawei-ubuntu-sound-fix).
+This repository is an independently maintained fork.
 
-Upstream contributors whose work is included here: Arnaud Rebillout,
-Bill Kav, KharLexis, maksimetny, Simone Checchia, Tim Kainz, Vladimir Kopylov
-and Wartybix.
+Upstream contributors whose work is included here: Arnaud Rebillout, Bill Kav,
+KharLexis, maksimetny, Simone Checchia, Tim Kainz, Vladimir Kopylov and Wartybix.
 
 ## Licensing
 
