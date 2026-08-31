@@ -5,10 +5,12 @@ SERVICE_NAME="huawei-soundcard-headphones-monitor"
 SCRIPT_FILE="${SERVICE_NAME}.sh"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
-# The installer picks whichever prefix was writable, so check both.
+# The installer picks whichever prefix was writable, and earlier versions of
+# this project used /var/usrlocal/bin, so clean up all of them.
 BIN_CANDIDATES=(
     "/usr/local/bin/${SCRIPT_FILE}"
     "/var/lib/${SERVICE_NAME}/bin/${SCRIPT_FILE}"
+    "/var/usrlocal/bin/${SCRIPT_FILE}"
 )
 
 if [ "$(id -u)" -eq 0 ]; then
