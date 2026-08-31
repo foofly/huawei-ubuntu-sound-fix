@@ -13,6 +13,24 @@ set -eo pipefail
 
 pidof -o %PPID -x "$0" >/dev/null && echo "Script $0 already running" && exit 1
 
+# Refuse to run on models this codec quirk does not apply to. The verbs below
+# target hardcoded widget numbers; elsewhere they address different widgets and
+# can silence the machine until a cold boot. The installer checks this too, but
+# the daemon re-applies on every boot, so it must not rely on that alone.
+SUPPORTED_MODELS="HKF-WXX CREF-16"
+product=$(cat "${DMI_DIR:-/sys/class/dmi/id}/product_name" 2>/dev/null || echo unknown)
+if [ "${FORCE_UNSUPPORTED_MODEL:-0}" != "1" ]; then
+    matched=0
+    for m in $SUPPORTED_MODELS; do
+        [ "$product" = "$m" ] && matched=1
+    done
+    if [ "$matched" -ne 1 ]; then
+        echo "Unsupported model '${product}' (supported: ${SUPPORTED_MODELS}) - refusing to touch the codec." >&2
+        echo "Set FORCE_UNSUPPORTED_MODEL=1 in the unit to override." >&2
+        exit 1
+    fi
+fi
+
 function get_sound_card_index() {
     local idx
     idx=$(grep -m1 'sof-hda-dsp' /proc/asound/cards | grep -Eo '^\s*[0-9]+')

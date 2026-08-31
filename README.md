@@ -6,24 +6,47 @@ Linux distributions.
 
 ## Is this your problem?
 
-The fix targets one specific hardware quirk. Check you have it before installing:
+The fix targets one specific hardware quirk, and the installer **refuses to run
+on unsupported models** because applying it elsewhere can leave you with no
+audio until a cold boot.
+
+**1. Check your model:**
 
 ```bash
 cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name
-grep sof-hda-dsp /proc/asound/cards
 ```
-
-You want `HUAWEI` plus one of these models, **and** a `sof-hda-dsp` card:
 
 | Model | Product name |
 | --- | --- |
 | MateBook 14s | `HKF-WXX` |
 | MateBook 16s | `CREF-16` |
 
-If your model differs, this will probably not help and may make things worse —
-the daemon writes raw HDA verbs to specific codec widgets, and those node
-numbers mean different things on other hardware. Other Huawei models (MateBook
-14, D14, D15) are **not** covered.
+**2. Check you actually have the fault** — this is the definitive test:
+
+```bash
+awk '/^Node 0x16 /,/^Node 0x18 /' /proc/asound/card*/codec#0 \
+  | grep -E '^Node 0x1[67]|^ +0x1[01]'
+```
+
+The asterisk marks the DAC each pin is currently using:
+
+```
+Node 0x16 [Pin Complex] ...      <- headphone pin
+     0x10* 0x11
+Node 0x17 [Pin Complex] ...      <- speaker pin
+     0x10  0x11*
+```
+
+* **`0x17` shows `0x11*`** — speaker and headphones already use separate DACs.
+  Your machine **does not have this bug**, and installing will break working
+  audio. Stop here.
+* **`0x17` shows `0x10*`** — both outputs are collapsed onto the headphone DAC.
+  That is the fault this fixes.
+
+Other Huawei models (MateBook 14, D14, D15) are **not** covered. If you are
+certain you want to proceed on an unlisted model, `FORCE_UNSUPPORTED_MODEL=1`
+overrides both the installer and the daemon — but read the warning above first,
+and know that recovery requires a full power cycle, not a reboot.
 
 ## Install
 
